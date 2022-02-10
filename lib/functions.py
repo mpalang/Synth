@@ -1,3 +1,4 @@
+#%% Preface
 # -*- coding: utf-8 -*-
 """
 Created on Tue Feb  8 20:57:05 2022
@@ -17,9 +18,26 @@ from scipy.io import wavfile
 from scipy import signal as si
 # import simpleaudio as sa
 
-#%%
+import logging
+import sys
 
-def oszi(f, form='sine', duration=3, sampleRate=44100 ):
+#%% Basics
+
+# def playSound(sound, sampleRate=44100):
+    
+#     play_obj = sa.play_buffer(sound, 1, 2, sampleRate)
+#     play_obj.wait_done()
+
+def exportaswave(sound, filename, sampleRate):
+    wavfile.write(filename,sampleRate,sound)
+    return filename
+
+def plotSound(t,sound,sampleRate):
+    
+    plot(t,sound)
+    plt.xlim(0,1000/sampleRate)
+
+def oszi(f, octave, detune, form, duration, sampleRate):
     
     """
     creates the basic signal. Note can be either specified in Hz or the musical denotation as string (e.g. 'a' for 440 Hz).
@@ -39,7 +57,9 @@ def oszi(f, form='sine', duration=3, sampleRate=44100 ):
     if type(f)==str:
         fHz=note_frequencies[f]
         
-   
+    fHz=fHz+fHz*detune/1000
+    
+    fHz= fHz*(2**(octave-4))
     
     if form=='sine':
         y=np.sin(2*np.pi*fHz* t)
@@ -50,58 +70,126 @@ def oszi(f, form='sine', duration=3, sampleRate=44100 ):
     if form=='square':
         y=si.square(2*np.pi*fHz*t, duty=0.5)
         
+    if form=='triangle':
+        y=si.sawtooth(2 * np.pi * fHz * t, 0.5)
+        
+    if form=='sawtooth-reverse':
+        y=si.sawtooth(2 * np.pi * fHz * t, 0)
+        
     
     return t,y
 
-def verzerrer(y, amount, volume):
+#%% ####Effects#####
+
+
+def fuzz(y, parms):
+    
+    amount=parms
+    
+    if not amount:
+        amount=20
+        
     y_v=y.copy()
     y_max=np.max(y)
     y_min=np.min(y)
-    distp=(1-amount)*y_max
-    distm=(1-amount)*y_min
+    distp=y_max*(1-amount/100)
+    distm=y_min*(1-amount/100)
     
     for i,v in enumerate(y_v):
         if v > distp:
-            y_v[i]=y[i]-random()*(y_max-distp)
+            y_v[i]=distp
         if v < distm:
-            y_v[i]=y[i]+random()*(-(y_min-distm))
+            y_v[i]=distm
             
         
-    
-    return y_v*volume
+    return y_v
     
         
+def moeffect(sound, parms):
+    
+    amount=parms
+    
+    sound2=np.zeros(len(sound))
+    for i,v in enumerate(sound):
+        if i+amount<len(sound)-1:
+            sound2[i]=sound[i+amount]
+        else:
+            sound2[i]=sound[i+amount-(len(sound)-1)]    
+            
+    sound=sound+sound2
+    
+    return sound
+
+    
+#%% Execute #########
+
+    
+def createSound(f, No, form, octave, duration, detune, effects, sampleRate):
+    
+    if type(f)!=list:
+    
+        f=[f]
         
-# def playSound(sound, sampleRate=44100):
+    if not detune:
+        detune=[0]*No
+        
+    else:
+        if type(detune)!=list:
+            detune=[detune]
+            
+    if len(detune)!=No:
+        logging.error('Detune and Notes must have the same number of values!')
+        sys.exit()
+        
     
-#     play_obj = sa.play_buffer(sound, 1, 2, sampleRate)
-#     play_obj.wait_done()
-
-def exportaswave(sound, filename='sound.wav', sampleRate=44100):
-    wavfile.write('sound.wav',sampleRate,sound)
-    return filename
+    if type(form)!=list:
+        form=[form]*No
+        
+    else:
+        if not len(detune)==No:
+            logging.error('Form and Number of Oscillators must have the same number of values if written as list!')
+            sys.exit()
     
-
-def chord(sound):
-    
-    chord_init=(1,1.5)
-    chord=[]
-    
-    for i in chord_init:
-    
-        chord.append(sound)
-    
-    dump=np.zeros(chord[0].shape)
-    
-    for i in chord:
-        dump=dump+i
-    
-    return chord
-    
-def synth(f,No=1,duration=3,detune=0, form='sine', scale=False, chord=None, sampleRate=44100, saveoption=True):
-    
+        
+    sound=np.zeros(duration*sampleRate)
+   
+    for i,v in enumerate(f):
+        
+        for j,u in enumerate(range(No)):
+            
+            t,o=oszi(v, octave, detune[j], form[j], duration, sampleRate)
+            sound=sound+o
+            
+    if 'Fuzz' in effects.keys():
+         
+         sound=fuzz(sound, effects['Fuzz'])
+         
+    if 'Moeffect' in effects.keys():
+        
+        sound=moeffect(sound, effects['Moeffect'])
 
         
+    
+    
+    return t,sound
+
+
+
+
+def synth(f,
+          octave=4,
+          No=1,
+          duration=3,
+          detune=False, 
+          form='sine', 
+          scale=False,
+          effects={},
+          volume=1,
+          sampleRate=44100, 
+          saveoption=True,
+          filename='sound.wav'):
+    
+    
     if scale:
         
         note_frequencies={}
@@ -110,36 +198,15 @@ def synth(f,No=1,duration=3,detune=0, form='sine', scale=False, chord=None, samp
             csv_reader=csv.reader(file)
             for row in csv_reader:
                 note_frequencies[row[0]] =  float(row[1])
-
-        for note in note_frequencies.keys():
-            t,step=oszi(note_frequencies[note], form=form, duration=duration, sampleRate=sampleRate)
-            sound=np.append(sound,step)
-            
-        t=np.append(t,[t]*(int(len(sound)/len(t))-1))  
-        
+    
     else:
-        t,sound=oszi(f,form)
-    
-    for i in range(No-1):
-        sound2=oszi(f*i+detune*(i+1))[1]
-        sound=sound+sound2
         
-     
-    if chord:
-        sound=chord(sound)
-        
+        t,sound=createSound(f, No, form, octave, duration, detune, effects, sampleRate) 
     
-    # if shape
-    plot(t,sound)
-    plt.xlim(0,500/sampleRate)   
-        
-    
-    if saveoption:
-        exportaswave((sound*(2**15-1)/np.max(np.abs(sound))).astype(np.int16))
+    sound = sound*volume/np.max(sound)
 
-        
-
+    plotSound(t,sound,sampleRate)
     
-
-    
-    
+    exportaswave(sound, filename, sampleRate)
+          
+      
